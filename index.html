@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <title>Konuşan Avatarım</title>
+    <style>
+        body { font-family: Arial; background: #f0f0f0; display: flex; justify-content: center; min-height: 100vh; margin: 0; }
+        .container { text-align: center; background: white; padding: 20px; border-radius: 10px; box-shadow: 0 4px 8px rgba(0,0,0,0.1); max-width: 90%; }
+        h1 { color: #333; font-size: 24px; }
+        p { color: #666; font-size: 16px; }
+        button { padding: 10px 20px; margin: 10px; font-size: 16px; background: #4CAF50; color: white; border: none; border-radius: 5px; cursor: pointer; }
+        button:disabled { background: #ccc; cursor: not-allowed; }
+        button:hover:not(:disabled) { background: #45a049; }
+        video { margin-top: 20px; max-width: 100%; border: 2px solid #333; border-radius: 10px; }
+        #transcript, #answer { font-size: 16px; color: #333; margin-top: 10px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Konuşan Avatarım</h1>
+        <p>Soru sor, ben cevap vereyim!</p>
+        <button id="startBtn" onclick="startRecognition()">Konuş</button>
+        <p id="transcript">Soru burada...</p>
+        <video id="avatarVideo" controls style="display:none;"></video>
+        <p id="answer">Cevap burada...</p>
+    </div>
+    <script>
+        // API anahtarları ve ayarlar
+        const XAI_API_KEY = "ulSeiAGNcEvLOR4fj4nHSIQsPUliK8oHT0o3Qm0IYbwFuevn8CiOR0lwonpUt2Kfv6fvPlAMY0n8pTDn";
+        const ELEVENLABS_API_KEY = "sk_2c8e21b6b8dda58790aa0f017e467e5fe904bbc8215d0a62";
+        const DID_API_KEY = "b3phbmhha2tpc2FoaW5AZ21haWwuY29t:vE1q3IzQN2Kw6zqrn5f_-";
+        const AVATAR_URL = "https://studio.d-id.com/share?id=bdea0fae6beb0a59b63e91859595f97a&utm_source=copy";
+
+        const recognition = new (window.SpeechRecognition || window.webkitSpeechRecognition)();
+        recognition.lang = "tr-TR";
+        const startBtn = document.getElementById("startBtn");
+        const transcriptP = document.getElementById("transcript");
+        const answerP = document.getElementById("answer");
+        const video = document.getElementById("avatarVideo");
+
+        function startRecognition() {
+            recognition.start();
+            startBtn.disabled = true;
+            startBtn.textContent = "Dinliyor...";
+            transcriptP.textContent = "Soru dinleniyor...";
+        }
+
+        recognition.onresult = async (event) => {
+            const userText = event.results[0][0].transcript;
+            transcriptP.textContent = `Soru: ${userText}`;
+            startBtn.disabled = false;
+            startBtn.textContent = "Konuş";
+
+            try {
+                // Grok’tan cevap al
+                const grokResponse = await fetch("https://api.x.ai/v1/grok", {
+                    method: "POST",
+                    headers: { "Authorization": `Bearer ${XAI_API_KEY}`, "Content-Type": "application/json" },
+                    body: JSON.stringify({ query: userText })
+                });
+                const answer = (await grokResponse.json()).response || "Hata oluştu.";
+                answerP.textContent = `Cevap: ${answer}`;
+
+                // ElevenLabs ile ses üret (Rachel sesiyle)
+                const elevenResponse = await fetch("https://api.elevenlabs.io/v1/text-to-speech/Rachel", {
+                    method: "POST",
+                    headers: { "xi-api-key": ELEVENLABS_API_KEY, "Content-Type": "application/json" },
+                    body: JSON.stringify({ text: answer, model_id: "eleven_multilingual_v1" })
+                });
+                const audioBlob = await elevenResponse.blob();
+                const audioBase64 = await blobToBase64(audioBlob);
+
+                // D-ID ile video üret
+                const didResponse = await fetch("https://api.d-id.com/talks", {
+                    method: "POST",
+                    headers: { "Authorization": `Basic ${DID_API_KEY}`, "Content-Type": "application/json" },
+                    body: JSON.stringify({ source_url: AVATAR_URL, audio: { base64: audioBase64 }, config: { stitch: true } })
+                });
+                const videoUrl = (await didResponse.json()).result_url || "";
+
+                if (videoUrl) {
+                    video.src = videoUrl;
+                    video.style.display = "block";
+                    video.play();
+                } else {
+                    alert("Video oluşturulamadı.");
+                }
+            } catch (error) {
+                alert("Hata: " + error.message);
+                answerP.textContent = "Hata oluştu.";
+            }
+        };
+
+        recognition.onerror = (event) => {
+            alert("Ses hatası: " + event.error);
+            startBtn.disabled = false;
+            startBtn.textContent = "Konuş";
+            transcriptP.textContent = "Soru burada...";
+        };
+
+        async function blobToBase64(blob) {
+            return new Promise((resolve) => {
+                const reader = new FileReader();
+                reader.onloadend = () => resolve(reader.result.split(",")[1]);
+                reader.readAsDataURL(blob);
+            });
+        }
+    </script>
+</body>
+</html>
